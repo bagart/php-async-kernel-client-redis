@@ -33,7 +33,7 @@ final class RedisActivePartitions implements ActivePartitionsContract
 
     public function markActive(string $partitionKey, int $availableAt): void
     {
-        $this->redis->zAdd($this->activeKey(), $availableAt, $partitionKey);
+        $this->redis->zAdd($this->activeKey(), [], $availableAt, $partitionKey);
     }
 
     public function claimNext(): ?string

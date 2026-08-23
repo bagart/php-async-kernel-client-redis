@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BAGArt\ASKClientRedis\Transport;
 
 use BAGArt\ASKClient\Client\ASKFuture;
+use BAGArt\ASKClient\Client\CallbackProducer;
 use BAGArt\ASKClient\Contracts\Pipeline\ASKContextContract;
 use BAGArt\ASKClient\Contracts\Pipeline\ASKFutureContract;
 use BAGArt\ASKClient\Contracts\Transport\ASKTransportContract;
@@ -54,8 +55,8 @@ final class ASKRedisTransportAdapter implements ASKTransportContract
 
     private function fromPromise(ASKPromiseContract $promise): ASKFutureContract
     {
-        return ASKFuture::pending(function () use ($promise) {
-            return $promise->await(true);
-        });
+        return ASKFuture::pending(new CallbackProducer(
+            static fn (): mixed => $promise->await(true),
+        ));
     }
 }

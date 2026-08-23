@@ -7,17 +7,18 @@ namespace BAGArt\ASKClientRedis\PubSub;
 use BAGArt\ASKClient\Client\ASKFuture;
 use BAGArt\ASKClient\Contracts\Client\ASKClientContract;
 use BAGArt\ASKClient\Contracts\Pipeline\ASKFutureContract;
+use BAGArt\ASKClient\Contracts\Pipeline\FutureProducerContract;
+use BAGArt\ASKClientRedis\Contracts\ASKRedisMessageHandlerContract;
 use BAGArt\ASKClientRedis\Contracts\ASKRedisSubscriberContract;
 use BAGArt\ASKClientRedis\Exception\ASKRedisException;
 use BAGArt\ASKClientRedis\Operations\ASKRedisSubscribeOperation;
 use BAGArt\ASKClientRedis\Transport\ASKRedisTransportAdapter;
 
-final class ASKRedisSubscriber implements ASKRedisSubscriberContract
+final class ASKRedisSubscriber implements ASKRedisSubscriberContract, FutureProducerContract
 {
     private bool $running = false;
 
-    /** @var callable|null */
-    private $handler = null;
+    private ?ASKRedisMessageHandlerContract $handler = null;
 
     public function __construct(
         private readonly ASKClientContract $client,
@@ -26,7 +27,7 @@ final class ASKRedisSubscriber implements ASKRedisSubscriberContract
     ) {
     }
 
-    public function onMessage(callable $handler): self
+    public function onMessage(ASKRedisMessageHandlerContract $handler): self
     {
         $this->handler = $handler;
 
@@ -43,9 +44,8 @@ final class ASKRedisSubscriber implements ASKRedisSubscriberContract
 
         $this->running = true;
 
-        return ASKFuture::pending(function (): void {
-            $this->listenLoop($this->handler);
-        });
+        // The subscriber itself is the lazy producer: await() drives listenLoop().
+        return ASKFuture::pending($this);
     }
 
     public function stop(): void
@@ -53,13 +53,25 @@ final class ASKRedisSubscriber implements ASKRedisSubscriberContract
         $this->running = false;
     }
 
-    private function listenLoop(callable $handler): void
+    public function produce(): mixed
     {
+        $this->listenLoop();
+
+        return null;
+    }
+
+    private function listenLoop(): void
+    {
+        $handler = $this->handler;
+        if ($handler === null) {
+            throw new ASKRedisException('No message handler registered. Call onMessage() first.');
+        }
+
         while ($this->running) {
             $message = $this->adapter->readPubSubMessage();
 
             if ($message !== null) {
-                ($handler)($message['channel'], $message['payload']);
+                $handler->handle($message['channel'], $message['payload']);
             }
         }
     }

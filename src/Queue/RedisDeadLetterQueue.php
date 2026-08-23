@@ -67,7 +67,7 @@ final class RedisDeadLetterQueue implements DeadLetterQueueContract
         $this->redis->hMSet($key, $data);
         $this->redis->expire($key, $this->ttlSeconds);
 
-        $this->redis->zAdd($this->indexKey(), time(), $job->jobId);
+        $this->redis->zAdd($this->indexKey(), [], time(), $job->jobId);
 
         $historyData = [
             'attempts' => json_encode($history['attempts'] ?? []),

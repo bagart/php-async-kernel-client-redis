@@ -298,7 +298,7 @@ final class PredisAdapter implements RedisClientContract, ASKWarmableContract
     {
         $this->ensureConnected();
 
-        // Сборка аргументов для zadd в стиле Predis
+        // Predis-style ZADD argument assembly: key, [options...], score, member, [more members...]
         $args = [$key];
         foreach ($options as $opt) {
             $args[] = $opt;
@@ -310,7 +310,7 @@ final class PredisAdapter implements RedisClientContract, ASKWarmableContract
             $args = array_merge($args, $more);
         }
 
-        return (int)call_user_func_array([$this->redis, 'zadd'], $args);
+        return (int)$this->redis->zadd(...$args);
     }
 
     public function zRem(string $key, mixed ...$member): int|false

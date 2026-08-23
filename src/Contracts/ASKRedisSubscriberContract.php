@@ -8,7 +8,7 @@ use BAGArt\ASKClient\Contracts\Pipeline\ASKFutureContract;
 
 interface ASKRedisSubscriberContract
 {
-    public function onMessage(callable $handler): self;
+    public function onMessage(ASKRedisMessageHandlerContract $handler): self;
 
     public function start(): ASKFutureContract;
 

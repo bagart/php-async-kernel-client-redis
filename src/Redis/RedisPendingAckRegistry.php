@@ -50,7 +50,7 @@ final class RedisPendingAckRegistry implements PendingAckRegistryContract
         string $workerId = '',
         string $fencingToken = ''
     ): void {
-        $this->redis->zAdd($this->pendingKey($partitionKey), time(), $jobId);
+        $this->redis->zAdd($this->pendingKey($partitionKey), [], time(), $jobId);
         $this->redis->hSet($this->entryKey($partitionKey), $jobId, $entryId);
 
         if ($workerId !== '' && $fencingToken !== '') {
