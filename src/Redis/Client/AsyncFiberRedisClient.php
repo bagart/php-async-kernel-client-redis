@@ -322,7 +322,9 @@ final class AsyncFiberRedisClient implements RedisClientContract, ASKWarmableCon
 
     public function zAdd(string $key, array $options, float $score, string $member, mixed ...$more): int|false
     {
-        return $this->executeCommand('ZADD', [$key, ...$options, (string)$score, $member, ...array_map('strval', $more)]
+        return $this->executeCommand(
+            'ZADD',
+            [$key, ...$options, (string)$score, $member, ...array_map('strval', $more)]
         );
     }
 
