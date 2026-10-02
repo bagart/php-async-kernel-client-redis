@@ -4,6 +4,6 @@
 
 | Need | File |
 |---|---|
-| Redis surface + laws | `SDD-ask-redis.md` |
+| Redis surface + laws | `sdd/ask-redis.md` |
 
 ## Source map: `ASKRedisClient.php` (fiber client), `Connection/`, `Queue/` (streams, DLQ, lease), `Lockers/`, `Cache/`, `PubSub/`, `Pipeline/`, `Operations/`, `Contracts/`.
