@@ -28,8 +28,8 @@ $options = CliActions::parseOptions(
 
 if (isset($options['help'])) {
     echo "Usage:
-php commands/example-redis-batch.php                       # Default: localhost:6379
-php commands/example-redis-batch.php --dsn=tcp://127.0.0.1:6379
+php cmd/example-redis-batch.php                       # Default: localhost:6379
+php cmd/example-redis-batch.php --dsn=tcp://127.0.0.1:6379
 
 Options:
   --dsn=DSN                        Redis DSN (default: tcp://127.0.0.1:6379)

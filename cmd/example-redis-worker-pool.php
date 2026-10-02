@@ -28,8 +28,8 @@ $options = CliActions::parseOptions(
 
 if (isset($options['help'])) {
     echo "Usage:
-php commands/example-redis-worker-pool.php                    # Default: 5 workers
-php commands/example-redis-worker-pool.php --workers=10
+php cmd/example-redis-worker-pool.php                    # Default: 5 workers
+php cmd/example-redis-worker-pool.php --workers=10
 
 Options:
   --dsn=DSN                        Redis DSN (default: tcp://127.0.0.1:6379)

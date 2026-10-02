@@ -28,7 +28,7 @@ $options = CliActions::parseOptions(
 
 if (isset($options['help'])) {
     echo "Usage:
-php commands/example-redis-pubsub-pipeline.php
+php cmd/example-redis-pubsub-pipeline.php
 
 Options:
   --dsn=DSN                        Redis DSN (default: tcp://127.0.0.1:6379)

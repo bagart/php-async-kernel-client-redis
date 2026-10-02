@@ -30,8 +30,8 @@ CliActions::initRuntime($options);
 
 if (isset($options['help'])) {
     echo "Usage:
-  php commands/example-redis-async-daemon.php
-  php commands/example-redis-async-daemon.php --dsn=tcp://127.0.0.1:6379
+  php cmd/example-redis-async-daemon.php
+  php cmd/example-redis-async-daemon.php --dsn=tcp://127.0.0.1:6379
 
 Options:
   --dsn=DSN                  Redis DSN (default: tcp://127.0.0.1:6379)
