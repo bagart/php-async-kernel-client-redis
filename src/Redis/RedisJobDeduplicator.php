@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis;
 
-use BAGArt\ASKClient\Contracts\Queue\JobDeduplicatorContract;
+use BAGArt\AskQueue\Contracts\JobDeduplicatorContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 
 final class RedisJobDeduplicator implements JobDeduplicatorContract
@@ -32,7 +32,7 @@ final class RedisJobDeduplicator implements JobDeduplicatorContract
         return $this->prefix.self::SUFFIX_PERMANENT.$jobId;
     }
 
-    private function compoundKey(string $jobId, string $partitionKey, int $hash): string
+    private function compoundKey(string $jobId, string $partitionKey, string $hash): string
     {
         return $this->prefix.self::SUFFIX_COMPOUND.$jobId.':'.$partitionKey.':'.$hash;
     }
@@ -48,7 +48,7 @@ final class RedisJobDeduplicator implements JobDeduplicatorContract
 
     public function tryMarkCompound(string $jobId, string $partitionKey, string $payload): bool
     {
-        $hash = crc32($payload);
+        $hash = hash('xxh3', $payload);
 
         $key = $this->compoundKey($jobId, $partitionKey, $hash);
 
@@ -64,6 +64,7 @@ final class RedisJobDeduplicator implements JobDeduplicatorContract
         $this->redis->set(
             $this->permanentKey($jobId),
             '1',
+            ['EX' => $this->ttlSeconds],
         );
     }
 

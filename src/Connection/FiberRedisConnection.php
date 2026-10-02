@@ -12,6 +12,8 @@ final class FiberRedisConnection
 {
     private const int READ_BUF_SIZE = 65536;
 
+    private const int MAX_RECONNECT_ATTEMPTS = 3;
+
     /**
      * @var resource|null
      */
@@ -41,7 +43,7 @@ final class FiberRedisConnection
             $errno,
             $errstr,
             $this->timeout,
-            STREAM_CLIENT_CONNECT,
+            STREAM_CLIENT_CONNECT | STREAM_CLIENT_PERSISTENT,
         );
 
         if (!is_resource($socket)) {
@@ -75,45 +77,70 @@ final class FiberRedisConnection
 
     public function write(string $data): void
     {
-        $total = strlen($data);
-        $written = 0;
+        $attempts = 0;
 
-        while ($written < $total) {
-            if (!is_resource($this->socket)) {
-                throw new ASKRedisConnectionException('Socket is closed');
+        while (true) {
+            $total = strlen($data);
+            $written = 0;
+
+            while ($written < $total) {
+                if (!is_resource($this->socket)) {
+                    throw new ASKRedisConnectionException('Socket is closed');
+                }
+
+                $chunk = substr($data, $written);
+                $result = @fwrite($this->socket, $chunk);
+
+                if ($result === false) {
+                    $this->disconnect();
+
+                    if ($attempts < self::MAX_RECONNECT_ATTEMPTS) {
+                        $attempts++;
+                        $this->connect();
+                        continue 2;
+                    }
+
+                    throw new ASKRedisConnectionException('Socket write error');
+                }
+
+                if ($result > 0) {
+                    $written += $result;
+
+                    continue;
+                }
+
+                $this->scheduler->watchWrite($this->socket);
+                Fiber::suspend();
+                $this->scheduler->unwatchWrite($this->socket);
             }
 
-            $chunk = substr($data, $written);
-            $result = @fwrite($this->socket, $chunk);
-
-            if ($result === false) {
-                $this->disconnect();
-
-                throw new ASKRedisConnectionException('Socket write error');
-            }
-
-            if ($result > 0) {
-                $written += $result;
-
-                continue;
-            }
-
-            // OS send buffer full — wait for write readiness
-            $this->scheduler->watchWrite($this->socket);
-            Fiber::suspend();
-            $this->scheduler->unwatchWrite($this->socket);
+            return;
         }
     }
 
     public function read(): string
     {
+        $attempts = 0;
+
         while (true) {
             if (!is_resource($this->socket)) {
+                if ($attempts < self::MAX_RECONNECT_ATTEMPTS) {
+                    $attempts++;
+                    $this->connect();
+                    continue;
+                }
+
                 throw new ASKRedisConnectionException('Socket is closed');
             }
 
             if (feof($this->socket)) {
                 $this->disconnect();
+
+                if ($attempts < self::MAX_RECONNECT_ATTEMPTS) {
+                    $attempts++;
+                    $this->connect();
+                    continue;
+                }
 
                 throw new ASKRedisConnectionException('Connection closed by peer');
             }
@@ -122,6 +149,12 @@ final class FiberRedisConnection
 
             if ($data === false) {
                 $this->disconnect();
+
+                if ($attempts < self::MAX_RECONNECT_ATTEMPTS) {
+                    $attempts++;
+                    $this->connect();
+                    continue;
+                }
 
                 throw new ASKRedisConnectionException('Socket read error');
             }

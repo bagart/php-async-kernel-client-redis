@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis\Client;
 
+use BAGArt\ASKClientRedis\Exception\ASKRedisConnectionException;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisPipelineContract;
 use BAGArt\ASKClientRedis\Redis\RedisDsn;
@@ -339,7 +340,7 @@ final class PhpRedisAdapter implements RedisClientContract, ASKWarmableContract
         $this->redis->xTrim(
             $partitionKey,
             (string)$maxLen,
-            true,
+            false,
         );
     }
 
@@ -416,11 +417,39 @@ final class PhpRedisAdapter implements RedisClientContract, ASKWarmableContract
 
     public function warm(): void
     {
-        $this->redis = new Redis();
-        $this->redis->connect(
-            $this->redisDsn->host,
-            $this->redisDsn->port,
-            $this->redisDsn->timeout,
-        );
+        $maxAttempts = 3;
+        $lastException = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                $this->redis = new Redis();
+                $connected = $this->redis->connect(
+                    $this->redisDsn->host,
+                    $this->redisDsn->port,
+                    $this->redisDsn->timeout,
+                );
+
+                if ($connected) {
+                    return;
+                }
+
+                $lastException = new ASKRedisConnectionException(
+                    sprintf('PhpRedis connect() returned false: %s:%d', $this->redisDsn->host, $this->redisDsn->port),
+                );
+            } catch (\RedisException $e) {
+                $lastException = new ASKRedisConnectionException(
+                    sprintf('PhpRedis connection failed: %s:%d — %s', $this->redisDsn->host, $this->redisDsn->port, $e->getMessage()),
+                    previous: $e,
+                );
+            }
+
+            $this->redis = null;
+
+            if ($attempt < $maxAttempts) {
+                usleep((int)(100_000 * (2 ** ($attempt - 1))));
+            }
+        }
+
+        throw $lastException;
     }
 }

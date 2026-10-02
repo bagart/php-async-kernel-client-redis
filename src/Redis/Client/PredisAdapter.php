@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis\Client;
 
+use BAGArt\ASKClientRedis\Exception\ASKRedisConnectionException;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisPipelineContract;
 use BAGArt\ASKClientRedis\Redis\RedisDsn;
 use BAGArt\AsyncKernel\Contracts\Daemons\ASKWarmableContract;
 use Predis\Client;
+use Predis\PredisException;
 
 final class PredisAdapter implements RedisClientContract, ASKWarmableContract
 {
@@ -437,7 +439,7 @@ final class PredisAdapter implements RedisClientContract, ASKWarmableContract
     {
         $this->ensureConnected();
 
-        $this->redis->xtrim($partitionKey, ['MAXLEN', '~', $maxLen]);
+        $this->redis->xtrim($partitionKey, ['MAXLEN', $maxLen]);
     }
 
     public function xTrim(string $key, array $options): int|false
@@ -506,11 +508,33 @@ final class PredisAdapter implements RedisClientContract, ASKWarmableContract
             $parameters['database'] = $this->redisDsn->database;
         }
 
-        $this->redis = new Client($parameters, [
-            'timeout' => $this->redisDsn->timeout,
-            'read_write_timeout' => $this->redisDsn->timeout,
-        ]);
+        $maxAttempts = 3;
+        $lastException = null;
 
-        $this->redis->connect();
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                $this->redis = new Client($parameters, [
+                    'timeout' => $this->redisDsn->timeout,
+                    'read_write_timeout' => $this->redisDsn->timeout,
+                ]);
+
+                $this->redis->connect();
+
+                return;
+            } catch (PredisException $e) {
+                $lastException = new ASKRedisConnectionException(
+                    sprintf('Predis connection failed: %s:%d — %s', $this->redisDsn->host, $this->redisDsn->port, $e->getMessage()),
+                    previous: $e,
+                );
+
+                $this->redis = null;
+            }
+
+            if ($attempt < $maxAttempts) {
+                usleep((int)(100_000 * (2 ** ($attempt - 1))));
+            }
+        }
+
+        throw $lastException;
     }
 }

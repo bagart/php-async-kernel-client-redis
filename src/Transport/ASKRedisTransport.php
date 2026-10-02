@@ -75,11 +75,21 @@ final class ASKRedisTransport implements ASKRedisTransportContract
             $this->sendRaw($payload);
 
             $results = [];
+            $lastError = null;
             for ($i = 0; $i < count($operations); $i++) {
-                $results[] = $this->readResponse();
+                try {
+                    $results[] = $this->readResponse();
+                } catch (\Throwable $e) {
+                    $lastError = $e;
+                    $results[] = null;
+                }
             }
 
-            $deferred->resolve($results);
+            if ($lastError !== null && $results !== []) {
+                $deferred->reject($lastError);
+            } else {
+                $deferred->resolve($results);
+            }
         } catch (\Throwable $e) {
             $deferred->reject($e);
         }
@@ -159,7 +169,15 @@ final class ASKRedisTransport implements ASKRedisTransportContract
                 'channel' => (string)$response[1],
                 'payload' => (string)$response[2],
             ];
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            $message = '[ASKRedis] readPubSubMessage failed: ' . $e->getMessage();
+
+            if ($this->logger !== null) {
+                $this->logger->warning($message, ['exception' => $e]);
+            } else {
+                error_log('[ASK][WARNING] ' . $message);
+            }
+
             return null;
         }
     }

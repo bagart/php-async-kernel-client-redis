@@ -16,10 +16,14 @@ use BAGArt\ASKClientRedis\Exception\ASKRedisConnectionException;
  */
 final readonly class RedisDsn
 {
+    public const float DEFAULT_TIMEOUT = 2.0;
+
+    public const int DEFAULT_PORT = 6379;
+
     public function __construct(
         public string $host = '127.0.0.1',
-        public int $port = 6379,
-        public float $timeout = 2.0,
+        public int $port = self::DEFAULT_PORT,
+        public float $timeout = self::DEFAULT_TIMEOUT,
         public ?string $password = null,
         public int $database = 0,
     ) {
@@ -42,8 +46,8 @@ final readonly class RedisDsn
 
         return new self(
             host: $parsed['host'],
-            port: (int)($parsed['port'] ?? 6379),
-            timeout: (float)($query['timeout'] ?? 2.0),
+            port: (int)($parsed['port'] ?? self::DEFAULT_PORT),
+            timeout: (float)($query['timeout'] ?? self::DEFAULT_TIMEOUT),
             password: $query['password'] ?? null,
             database: (int)($query['db'] ?? 0),
         );
@@ -52,7 +56,7 @@ final readonly class RedisDsn
     public function toString(): string
     {
         $qs = http_build_query(array_filter([
-            'timeout' => $this->timeout,
+            'timeout' => $this->timeout === self::DEFAULT_TIMEOUT ? null : $this->timeout,
             'password' => $this->password,
             'db' => $this->database,
         ], fn ($v) => $v !== null && $v !== '' && $v !== 0 && $v !== 0.0));

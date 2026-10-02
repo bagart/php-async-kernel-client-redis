@@ -11,6 +11,7 @@ use BAGArt\ASKClient\Contracts\Pipeline\ASKFutureContract;
 use BAGArt\ASKClient\Contracts\Transport\ASKTransportContract;
 use BAGArt\ASKClientRedis\Contracts\ASKRedisOperationContract;
 use BAGArt\ASKClientRedis\Contracts\ASKRedisTransportContract;
+use BAGArt\ASKClientRedis\Contracts\PubSubReadableContract;
 use BAGArt\ASKClientRedis\Operations\ASKRedisPublishOperation;
 use BAGArt\ASKClientRedis\Operations\ASKRedisSubscribeOperation;
 use BAGArt\ASKClientRedis\Pipeline\ASKRedisPipeline;
@@ -22,7 +23,7 @@ use BAGArt\AsyncKernel\Contracts\ASKPromiseContract;
  * Registered inside ASKClient's transport registry as "redis://".
  * Handles dispatching different operation types to the underlying Redis transport.
  */
-final class ASKRedisTransportAdapter implements ASKTransportContract
+final class ASKRedisTransportAdapter implements ASKTransportContract, PubSubReadableContract
 {
     public function __construct(
         private readonly ASKRedisTransportContract $redisTransport,

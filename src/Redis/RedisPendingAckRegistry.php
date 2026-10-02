@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis;
 
-use BAGArt\ASKClient\Contracts\Queue\PendingAckRegistryContract;
+use BAGArt\AskQueue\Contracts\PendingAckRegistryContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 
 final class RedisPendingAckRegistry implements PendingAckRegistryContract
@@ -17,6 +17,46 @@ final class RedisPendingAckRegistry implements PendingAckRegistryContract
 
     private const string SUFFIX_PARTITIONS = 'stream:pending:partitions';
 
+    private const string LUA_ADD = <<<'LUA'
+local pendingKey = KEYS[1]
+local entryKey = KEYS[2]
+local ownershipKey = KEYS[3]
+
+local jobId = ARGV[1]
+local entryId = ARGV[2]
+local now = ARGV[3]
+local workerId = ARGV[4]
+local fencingToken = ARGV[5]
+
+redis.call('ZADD', pendingKey, now, jobId)
+redis.call('HSET', entryKey, jobId, entryId)
+
+if workerId ~= '' and fencingToken ~= '' then
+    redis.call('HSET', ownershipKey, jobId .. ':workerId', workerId)
+    redis.call('HSET', ownershipKey, jobId .. ':fencingToken', fencingToken)
+end
+
+return 1
+LUA;
+
+    private const string LUA_CLEANUP = <<<'LUA'
+local pendingKey = KEYS[1]
+local entryKey = KEYS[2]
+local ownershipKey = KEYS[3]
+local partitionsKey = KEYS[4]
+local partitionKey = ARGV[1]
+
+if redis.call('ZCARD', pendingKey) == 0 then
+    redis.call('DEL', pendingKey)
+    redis.call('DEL', entryKey)
+    redis.call('DEL', ownershipKey)
+    redis.call('SREM', partitionsKey, partitionKey)
+    return 1
+end
+
+return 0
+LUA;
+
     public function __construct(
         private readonly RedisClientContract $redis,
         private readonly string $prefix = 'ASK:',
@@ -25,17 +65,17 @@ final class RedisPendingAckRegistry implements PendingAckRegistryContract
 
     private function pendingKey(string $partitionKey): string
     {
-        return $this->prefix.self::SUFFIX_PENDING.$partitionKey;
+        return $this->prefix.'{'.$partitionKey.'}'.self::SUFFIX_PENDING.$partitionKey;
     }
 
     private function entryKey(string $partitionKey): string
     {
-        return $this->prefix.self::SUFFIX_ENTRY.$partitionKey;
+        return $this->prefix.'{'.$partitionKey.'}'.self::SUFFIX_ENTRY.$partitionKey;
     }
 
     private function ownershipKey(string $partitionKey): string
     {
-        return $this->prefix.self::SUFFIX_OWNERSHIP.$partitionKey;
+        return $this->prefix.'{'.$partitionKey.'}'.self::SUFFIX_OWNERSHIP.$partitionKey;
     }
 
     private function partitionsKey(): string
@@ -50,15 +90,20 @@ final class RedisPendingAckRegistry implements PendingAckRegistryContract
         string $workerId = '',
         string $fencingToken = ''
     ): void {
-        $this->redis->zAdd($this->pendingKey($partitionKey), [], time(), $jobId);
-        $this->redis->hSet($this->entryKey($partitionKey), $jobId, $entryId);
-
-        if ($workerId !== '' && $fencingToken !== '') {
-            $key = $this->ownershipKey($partitionKey);
-
-            $this->redis->hSet($key, $jobId.':workerId', $workerId);
-            $this->redis->hSet($key, $jobId.':fencingToken', $fencingToken);
-        }
+        $this->redis->eval(
+            self::LUA_ADD,
+            [
+                $this->pendingKey($partitionKey),
+                $this->entryKey($partitionKey),
+                $this->ownershipKey($partitionKey),
+                $jobId,
+                $entryId,
+                (string)time(),
+                $workerId,
+                $fencingToken,
+            ],
+            3,
+        );
 
         $this->redis->sAdd($this->partitionsKey(), $partitionKey);
     }
@@ -124,11 +169,16 @@ final class RedisPendingAckRegistry implements PendingAckRegistryContract
 
     public function cleanupPartition(string $partitionKey): void
     {
-        if ($this->redis->zCard($this->pendingKey($partitionKey)) === 0) {
-            $this->redis->del($this->pendingKey($partitionKey));
-            $this->redis->del($this->entryKey($partitionKey));
-            $this->redis->del($this->ownershipKey($partitionKey));
-            $this->redis->sRem($this->partitionsKey(), $partitionKey);
-        }
+        $this->redis->eval(
+            self::LUA_CLEANUP,
+            [
+                $this->pendingKey($partitionKey),
+                $this->entryKey($partitionKey),
+                $this->ownershipKey($partitionKey),
+                $this->partitionsKey(),
+                $partitionKey,
+            ],
+            4,
+        );
     }
 }

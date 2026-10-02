@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis;
 
-use BAGArt\ASKClient\Contracts\Queue\JobSerializerContract;
-use BAGArt\ASKClient\Contracts\Queue\PartitionStreamContract;
+use BAGArt\AskQueue\Contracts\JobSerializerContract;
+use BAGArt\AskQueue\Contracts\PartitionStreamContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\AsyncKernel\Job\AsyncJob;
 
@@ -14,6 +14,27 @@ final class RedisPartitionStream implements PartitionStreamContract
     private const string SUFFIX_PARTITION = 'partition:';
 
     private const string SUFFIX_OWNERSHIP = 'stream:ownership:';
+
+    private const string LUA_ACK = <<<'LUA'
+local streamKey = KEYS[1]
+local ownershipKey = KEYS[2]
+local entryId = ARGV[1]
+local workerId = ARGV[2]
+
+if workerId ~= '' then
+    local storedWorker = redis.call('HGET', ownershipKey, 'workerId')
+    if storedWorker ~= workerId then
+        return 0
+    end
+end
+
+redis.call('XDEL', streamKey, entryId)
+redis.call('EXPIRE', ownershipKey, 1)
+
+return 1
+LUA;
+
+    private const int OWNERSHIP_TTL_SECONDS = 86400;
 
     public function __construct(
         private readonly RedisClientContract $redis,
@@ -24,12 +45,12 @@ final class RedisPartitionStream implements PartitionStreamContract
 
     private function streamKey(string $partitionKey): string
     {
-        return $this->prefix.self::SUFFIX_PARTITION.$partitionKey;
+        return $this->prefix.'{'.$partitionKey.'}'.self::SUFFIX_PARTITION.$partitionKey;
     }
 
     private function ownershipKey(string $partitionKey, string $entryId): string
     {
-        return $this->prefix.self::SUFFIX_OWNERSHIP.$partitionKey.':'.$entryId;
+        return $this->prefix.'{'.$partitionKey.'}'.self::SUFFIX_OWNERSHIP.$partitionKey.':'.$entryId;
     }
 
     public function push(string $partitionKey, AsyncJob $job): string
@@ -79,24 +100,30 @@ final class RedisPartitionStream implements PartitionStreamContract
 
     public function ack(string $partitionKey, string $entryId, ?string $workerId = null): void
     {
-        if ($workerId !== null) {
-            if (!$this->verifyOwnership($partitionKey, $entryId, $workerId, '')) {
-                return;
-            }
-        }
-
-        $this->redis->xDel($this->streamKey($partitionKey), $entryId);
-
-        $key = $this->ownershipKey($partitionKey, $entryId);
-        $this->redis->del($key);
+        $this->redis->eval(
+            self::LUA_ACK,
+            [
+                $this->streamKey($partitionKey),
+                $this->ownershipKey($partitionKey, $entryId),
+                $entryId,
+                $workerId ?? '',
+            ],
+            2,
+        );
     }
 
     public function claimOwnership(string $partitionKey, string $entryId, string $workerId, string $fencingToken): bool
     {
         $key = $this->ownershipKey($partitionKey, $entryId);
 
-        return (bool)$this->redis->hSetNx($key, 'workerId', $workerId)
+        $result = (bool)$this->redis->hSetNx($key, 'workerId', $workerId)
             && $this->redis->hSetNx($key, 'fencingToken', $fencingToken);
+
+        if ($result) {
+            $this->redis->expire($key, self::OWNERSHIP_TTL_SECONDS);
+        }
+
+        return $result;
     }
 
     public function verifyOwnership(string $partitionKey, string $entryId, string $workerId, string $fencingToken): bool

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Queue;
 
-use BAGArt\ASKClient\Contracts\Queue\DeadLetterQueueContract;
-use BAGArt\ASKClient\Contracts\Queue\JobSerializerContract;
+use BAGArt\AskQueue\Contracts\DeadLetterQueueContract;
+use BAGArt\AskQueue\Contracts\JobSerializerContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\AsyncKernel\Job\AsyncJob;
 use BAGArt\AsyncKernel\Wrappers\ASKLogWrapper;
@@ -18,6 +18,8 @@ final class RedisDeadLetterQueue implements DeadLetterQueueContract
     private const string SUFFIX_INDEX = 'dead_letter:index';
 
     private const string SUFFIX_HISTORY = 'dead_letter:history:';
+
+    private const int MAX_INDEX_SIZE = 10_000;
 
     public function __construct(
         private readonly RedisClientContract $redis,
@@ -81,6 +83,10 @@ final class RedisDeadLetterQueue implements DeadLetterQueueContract
         $this->redis->hMSet($histKey, $historyData);
         $this->redis->expire($histKey, $this->ttlSeconds);
 
+        $this->trimIndex();
+
+        $this->sweepStaleEntries();
+
         $this->logger?->error(
             '[DeadLetterQueue] job {jobId} moved to DLQ (category: {category}): {error}',
             [
@@ -113,6 +119,53 @@ final class RedisDeadLetterQueue implements DeadLetterQueueContract
         }
 
         return 'exception';
+    }
+
+    private function trimIndex(): void
+    {
+        $indexKey = $this->indexKey();
+        $size = $this->redis->zCard($indexKey);
+
+        if ($size === false || $size <= self::MAX_INDEX_SIZE) {
+            return;
+        }
+
+        $overflow = $this->redis->zRange($indexKey, 0, $size - self::MAX_INDEX_SIZE - 1);
+
+        if (is_array($overflow)) {
+            foreach ($overflow as $member) {
+                $this->redis->zRem($indexKey, $member);
+            }
+        }
+    }
+
+    /**
+     * Remove index entries whose job data has expired.
+     *
+     * Scans a batch of index entries and removes those whose corresponding
+     * job key no longer exists in Redis (expired via TTL). Called on push()
+     * to keep the index bounded.
+     */
+    private function sweepStaleEntries(): void
+    {
+        $indexKey = $this->indexKey();
+        $batchSize = 50;
+
+        $entries = $this->redis->zRange($indexKey, 0, $batchSize - 1);
+
+        if (!is_array($entries) || $entries === []) {
+            return;
+        }
+
+        foreach ($entries as $jobId) {
+            $key = $this->jobKey($jobId);
+            $exists = $this->redis->exists($key);
+
+            if (!$exists) {
+                $this->redis->zRem($indexKey, $jobId);
+                $this->redis->del($this->historyKey($jobId));
+            }
+        }
     }
 
     public function get(string $jobId): ?array

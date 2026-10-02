@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis;
 
-use BAGArt\ASKClient\Contracts\Queue\JobStateStoreContract;
+use BAGArt\AskQueue\Contracts\JobStateStoreContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\AsyncKernel\Job\JobState;
 use BAGArt\AsyncKernel\Job\JobStateMachine;
@@ -24,14 +24,10 @@ final class RedisJobStateStore implements JobStateStoreContract
     private const string ATOMIC_CONSUME = <<<'LUA'
 local stateKey = KEYS[1]
 local fencingKey = KEYS[2]
-local zombieKey = KEYS[3]
-local lockKey = KEYS[4]
+local lockKey = KEYS[3]
 
-local jobId = KEYS[5]
 local workerId = ARGV[1]
 local token = ARGV[2]
-local now = ARGV[3]
-local payload = ARGV[4]
 
 -- read current state
 local state = redis.call('HGET', stateKey, 'state')
@@ -52,22 +48,12 @@ end
 redis.call('EXPIRE', lockKey, 3600)
 
 -- mark running + workerId + token
-local fields = {
+redis.call('HSET', stateKey,
     'state', 'running',
     'workerId', workerId,
     'fencingToken', token,
-    'startedAt', now,
-}
-
-if payload and payload ~= '' then
-    table.insert(fields, 'payload')
-    table.insert(fields, payload)
-end
-
-redis.call('HSET', stateKey, unpack(fields))
-
--- zombie index
-redis.call('ZADD', zombieKey, now, jobId)
+    'startedAt', ARGV[3]
+)
 
 -- store fencing token separately for fast verify
 redis.call('HSET', fencingKey, 'workerId', workerId, 'token', token)
@@ -79,8 +65,6 @@ LUA;
 local lockKey = KEYS[1]
 local stateKey = KEYS[2]
 local fencingKey = KEYS[3]
-local zombieKey = KEYS[4]
-local jobId = KEYS[5]
 
 local workerId = ARGV[1]
 local now = ARGV[2]
@@ -100,7 +84,6 @@ redis.call('HSET', stateKey,
     'attempt', ARGV[4]
 )
 
-redis.call('ZADD', zombieKey, now, jobId)
 redis.call('HSET', fencingKey, 'workerId', workerId, 'token', token)
 
 return 1
@@ -108,10 +91,9 @@ LUA;
 
     private const string LUA_COMPLETE = <<<'LUA'
 local stateKey = KEYS[1]
-local zombieKey = KEYS[2]
-local jobId = KEYS[3]
-local retryKey = KEYS[4]
-local fencingKey = KEYS[5]
+local jobId = KEYS[2]
+local retryKey = KEYS[3]
+local fencingKey = KEYS[4]
 
 local state = redis.call('HGET', stateKey, 'state')
 
@@ -128,11 +110,67 @@ redis.call('HSET', stateKey,
     'completedAt', ARGV[1]
 )
 
-redis.call('ZREM', zombieKey, jobId)
 redis.call('DEL', retryKey)
 redis.call('DEL', fencingKey)
 
 return 1
+LUA;
+
+    private const string LUA_MARK_FAILED = <<<'LUA'
+local stateKey = KEYS[1]
+local fencingKey = KEYS[2]
+local zombieKey = KEYS[3]
+local jobId = ARGV[3]
+
+redis.call('HSET', stateKey,
+    'state', 'failed',
+    'error', ARGV[1],
+    'completedAt', ARGV[2]
+)
+
+redis.call('DEL', fencingKey)
+redis.call('ZREM', zombieKey, jobId)
+
+return 1
+LUA;
+
+    private const string LUA_MARK_DEAD_LETTER = <<<'LUA'
+local stateKey = KEYS[1]
+local fencingKey = KEYS[2]
+local retryKey = KEYS[3]
+local zombieKey = KEYS[4]
+local jobId = ARGV[3]
+
+redis.call('HSET', stateKey,
+    'state', 'dead_letter',
+    'error', ARGV[1],
+    'completedAt', ARGV[2]
+)
+
+redis.call('DEL', fencingKey)
+redis.call('DEL', retryKey)
+redis.call('ZREM', zombieKey, jobId)
+
+return 1
+LUA;
+
+    private const string LUA_MARK_RETRY = <<<'LUA'
+local stateKey = KEYS[1]
+local fencingKey = KEYS[2]
+local zombieKey = KEYS[3]
+local jobId = ARGV[2]
+
+local attempt = redis.call('HINCRBY', stateKey, 'attempt', 1)
+
+redis.call('HSET', stateKey,
+    'state', 'retry',
+    'retryAt', ARGV[1]
+)
+
+redis.call('DEL', fencingKey)
+redis.call('ZREM', zombieKey, jobId)
+
+return attempt
 LUA;
 
     public function __construct(
@@ -143,17 +181,17 @@ LUA;
 
     private function jobKey(string $jobId): string
     {
-        return $this->prefix.self::SUFFIX_JOB.$jobId;
+        return $this->prefix.'{'.$jobId.'}'.self::SUFFIX_JOB;
     }
 
     private function lockKey(string $jobId): string
     {
-        return $this->prefix.self::SUFFIX_JOB.'lock:'.$jobId;
+        return $this->prefix.'{'.$jobId.'}'.self::SUFFIX_JOB.'lock:';
     }
 
     private function retryDispatchKey(string $jobId): string
     {
-        return $this->prefix.self::SUFFIX_RETRY_DISPATCH.$jobId;
+        return $this->prefix.'{'.$jobId.'}'.self::SUFFIX_RETRY_DISPATCH;
     }
 
     private function zombieKey(): string
@@ -163,7 +201,7 @@ LUA;
 
     private function fencingKey(string $jobId): string
     {
-        return $this->prefix.self::SUFFIX_FENCING.$jobId;
+        return $this->prefix.'{'.$jobId.'}'.self::SUFFIX_FENCING;
     }
 
     private function workerAliveKey(string $workerId): string
@@ -180,16 +218,17 @@ LUA;
             [
                 $this->jobKey($jobId),
                 $this->fencingKey($jobId),
-                $this->zombieKey(),
                 $this->lockKey($jobId),
-                $jobId,
                 $workerId,
                 $token,
-                time(),
-                $payload ?? '',
+                (string)time(),
             ],
-            5
+            3
         );
+
+        if ($result) {
+            $this->redis->zAdd($this->zombieKey(), time(), $jobId);
+        }
 
         return $result ? (string)$result : null;
     }
@@ -207,21 +246,25 @@ LUA;
     {
         $token = bin2hex(random_bytes(16));
 
-        return (bool)$this->redis->eval(
+        $result = (bool)$this->redis->eval(
             self::LUA_START,
             [
                 $this->lockKey($jobId),
                 $this->jobKey($jobId),
                 $this->fencingKey($jobId),
-                $this->zombieKey(),
-                $jobId,
                 $workerId,
-                time(),
+                (string)time(),
                 $token,
                 0,
             ],
-            5
+            3
         );
+
+        if ($result) {
+            $this->redis->zAdd($this->zombieKey(), time(), $jobId);
+        }
+
+        return $result;
     }
 
     public function claim(string $jobId, string $workerId, ?string $payload = null): bool
@@ -253,54 +296,69 @@ LUA;
 
     public function markCompleted(string $jobId): bool
     {
-        return (bool)$this->redis->eval(
+        $result = (bool)$this->redis->eval(
             self::LUA_COMPLETE,
             [
                 $this->jobKey($jobId),
-                $this->zombieKey(),
                 $jobId,
                 $this->retryDispatchKey($jobId),
                 $this->fencingKey($jobId),
-                time(),
+                (string)time(),
             ],
-            5
+            4
         );
+
+        if ($result) {
+            $this->redis->zRem($this->zombieKey(), $jobId);
+        }
+
+        return $result;
     }
 
     public function markFailed(string $jobId, string $error): void
     {
-        JobStateMachine::transition(
-            JobState::from($this->getState($jobId) ?? 'new'),
-            JobState::FAILED,
+        $currentState = $this->getState($jobId);
+
+        if ($currentState !== null) {
+            JobStateMachine::transition(
+                JobState::from($currentState),
+                JobState::FAILED,
+            );
+        }
+
+        $this->redis->eval(
+            self::LUA_MARK_FAILED,
+            [
+                $this->jobKey($jobId),
+                $this->fencingKey($jobId),
+                $this->zombieKey(),
+                $error,
+                (string)time(),
+                $jobId,
+            ],
+            3,
         );
-
-        $this->redis->hMSet($this->jobKey($jobId), [
-            'state' => 'failed',
-            'error' => $error,
-            'completedAt' => time(),
-        ]);
-
-        $this->redis->zRem($this->zombieKey(), $jobId);
-        $this->redis->del($this->fencingKey($jobId));
     }
 
     public function markDeadLetter(string $jobId, string $error): void
     {
-        $this->redis->hMSet($this->jobKey($jobId), [
-            'state' => 'dead_letter',
-            'error' => $error,
-            'completedAt' => time(),
-        ]);
-
-        $this->redis->zRem($this->zombieKey(), $jobId);
-        $this->redis->del($this->fencingKey($jobId));
-        $this->redis->del($this->retryDispatchKey($jobId));
+        $this->redis->eval(
+            self::LUA_MARK_DEAD_LETTER,
+            [
+                $this->jobKey($jobId),
+                $this->fencingKey($jobId),
+                $this->retryDispatchKey($jobId),
+                $this->zombieKey(),
+                $error,
+                (string)time(),
+                $jobId,
+            ],
+            4,
+        );
     }
 
     public function markRetry(string $jobId, int $retryAt): void
     {
-        $key = $this->jobKey($jobId);
-
         $currentState = $this->getState($jobId);
 
         if ($currentState !== null) {
@@ -310,16 +368,17 @@ LUA;
             );
         }
 
-        $attempt = (int)$this->redis->hGet($key, 'attempt');
-
-        $this->redis->hMSet($key, [
-            'state' => 'retry',
-            'retryAt' => $retryAt,
-            'attempt' => $attempt + 1,
-        ]);
-
-        $this->redis->zRem($this->zombieKey(), $jobId);
-        $this->redis->del($this->fencingKey($jobId));
+        $this->redis->eval(
+            self::LUA_MARK_RETRY,
+            [
+                $this->jobKey($jobId),
+                $this->fencingKey($jobId),
+                $this->zombieKey(),
+                (string)$retryAt,
+                $jobId,
+            ],
+            3,
+        );
     }
 
     public function isCompleted(string $jobId): bool

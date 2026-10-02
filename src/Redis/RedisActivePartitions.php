@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Redis;
 
-use BAGArt\ASKClient\Contracts\Queue\ActivePartitionsContract;
+use BAGArt\AskQueue\Contracts\ActivePartitionsContract;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 
 final class RedisActivePartitions implements ActivePartitionsContract
@@ -23,12 +23,12 @@ final class RedisActivePartitions implements ActivePartitionsContract
 
     private function activeKey(): string
     {
-        return $this->prefix.self::SUFFIX_ACTIVE;
+        return $this->prefix.'{'.self::SUFFIX_ACTIVE.'}'.self::SUFFIX_ACTIVE;
     }
 
     private function penaltyKey(): string
     {
-        return $this->prefix.self::SUFFIX_PENALTIES;
+        return $this->prefix.'{'.self::SUFFIX_ACTIVE.'}'.self::SUFFIX_PENALTIES;
     }
 
     public function markActive(string $partitionKey, int $availableAt): void
@@ -185,7 +185,7 @@ LUA;
 local key = KEYS[1]
 local factor = tonumber(ARGV[1])
 
-local items = redis.call('ZRANGE', key, 0, -1, 'WITHSCORES')
+local items = redis.call('ZRANGE', key, 0, 999, 'WITHSCORES')
 
 for i=1,#items,2 do
     local member = items[i]

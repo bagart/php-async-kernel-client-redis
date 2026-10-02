@@ -10,20 +10,31 @@ use BAGArt\ASKClient\Contracts\Pipeline\ASKFutureContract;
 use BAGArt\ASKClient\Contracts\Pipeline\FutureProducerContract;
 use BAGArt\ASKClientRedis\Contracts\ASKRedisMessageHandlerContract;
 use BAGArt\ASKClientRedis\Contracts\ASKRedisSubscriberContract;
+use BAGArt\ASKClientRedis\Contracts\PubSubReadableContract;
 use BAGArt\ASKClientRedis\Exception\ASKRedisException;
 use BAGArt\ASKClientRedis\Operations\ASKRedisSubscribeOperation;
-use BAGArt\ASKClientRedis\Transport\ASKRedisTransportAdapter;
 
 final class ASKRedisSubscriber implements ASKRedisSubscriberContract, FutureProducerContract
 {
+    public const int BASE_BACKOFF_MS = 50;
+
+    public const int MAX_BACKOFF_MS = 8000;
+
+    public const int MAX_CONSECUTIVE_FAILURES = 30;
+
     private bool $running = false;
 
     private ?ASKRedisMessageHandlerContract $handler = null;
 
+    private int $consecutiveFailures = 0;
+
     public function __construct(
         private readonly ASKClientContract $client,
-        private readonly ASKRedisTransportAdapter $adapter,
+        private readonly PubSubReadableContract $adapter,
         private readonly string $channel,
+        private readonly int $baseBackoffMs = self::BASE_BACKOFF_MS,
+        private readonly int $maxBackoffMs = self::MAX_BACKOFF_MS,
+        private readonly int $maxConsecutiveFailures = self::MAX_CONSECUTIVE_FAILURES,
     ) {
     }
 
@@ -40,11 +51,10 @@ final class ASKRedisSubscriber implements ASKRedisSubscriberContract, FutureProd
             throw new ASKRedisException('No message handler registered. Call onMessage() first.');
         }
 
-        $this->client->execute(new ASKRedisSubscribeOperation($this->channel));
+        $this->subscribe();
 
         $this->running = true;
 
-        // The subscriber itself is the lazy producer: await() drives listenLoop().
         return ASKFuture::pending($this);
     }
 
@@ -68,11 +78,48 @@ final class ASKRedisSubscriber implements ASKRedisSubscriberContract, FutureProd
         }
 
         while ($this->running) {
-            $message = $this->adapter->readPubSubMessage();
+            try {
+                $message = $this->adapter->readPubSubMessage();
 
-            if ($message !== null) {
-                $handler->handle($message['channel'], $message['payload']);
+                if ($message !== null) {
+                    $handler->handle($message['channel'], $message['payload']);
+                    $this->consecutiveFailures = 0;
+
+                    continue;
+                }
+
+                $this->consecutiveFailures++;
+                $this->backoff();
+                $this->subscribe();
+            } catch (\Throwable) {
+                $this->consecutiveFailures++;
+
+                if ($this->consecutiveFailures >= $this->maxConsecutiveFailures) {
+                    $this->running = false;
+
+                    throw new ASKRedisException(
+                        sprintf('Subscriber disconnected after %d consecutive failures.', $this->maxConsecutiveFailures),
+                    );
+                }
+
+                $this->backoff();
+                $this->subscribe();
             }
         }
+    }
+
+    private function subscribe(): void
+    {
+        $this->client->execute(new ASKRedisSubscribeOperation($this->channel));
+    }
+
+    private function backoff(): void
+    {
+        $delayMs = min(
+            $this->baseBackoffMs * (2 ** $this->consecutiveFailures),
+            $this->maxBackoffMs,
+        );
+
+        usleep($delayMs * 1000);
     }
 }

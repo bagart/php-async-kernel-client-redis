@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\ASKClientRedis\Queue\Adapters;
 
-use BAGArt\ASKClient\Contracts\Queue\ASKQueueAdapterContract;
+use BAGArt\AskQueue\Contracts\ASKQueueAdapterContract;
 use BAGArt\ASKClientRedis\Redis\Client\PhpRedisAdapter;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\ASKClientRedis\Redis\RedisDsn;

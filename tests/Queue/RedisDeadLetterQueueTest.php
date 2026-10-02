@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use BAGArt\ASKClient\Contracts\Queue\DeadLetterQueueContract;
-use BAGArt\ASKClient\Contracts\Queue\JobSerializerContract;
+use BAGArt\AskQueue\Contracts\DeadLetterQueueContract;
+use BAGArt\AskQueue\Contracts\JobSerializerContract;
 use BAGArt\ASKClientRedis\Queue\RedisDeadLetterQueue;
 use BAGArt\ASKClientRedis\Redis\Contract\RedisClientContract;
 use BAGArt\AsyncKernel\Job\AsyncJob;
@@ -298,6 +298,14 @@ class FakeRedisClientForDlq implements RedisClientContract
 }
 
 /**
+ * Test stand-in for a connection timeout failure — classified via its
+ * "Timeout" class name and "timed out" message.
+ */
+class FakeTimeoutException extends RuntimeException
+{
+}
+
+/**
  * Hand-rolled fake serializer.
  */
 class FakeJobSerializer implements JobSerializerContract
@@ -394,7 +402,7 @@ describe('RedisDeadLetterQueue', function () {
             createdAt: time(),
         );
 
-        $this->dlq->push($job, new TimeoutException('Connection timed out'));
+        $this->dlq->push($job, new FakeTimeoutException('Connection timed out'));
 
         $stored = $this->fake->hashes['ASK:dead_letter:job:job-t'] ?? [];
 

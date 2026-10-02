@@ -491,7 +491,7 @@ final class AsyncFiberRedisClient implements RedisClientContract, ASKWarmableCon
 
     public function trim(string $partitionKey, int $maxLen): void
     {
-        $this->executeCommand('XTRIM', [$partitionKey, 'MAXLEN', '~', (string)$maxLen]);
+        $this->executeCommand('XTRIM', [$partitionKey, 'MAXLEN', (string)$maxLen]);
     }
 
     public function xTrim(string $key, array $options): int|false

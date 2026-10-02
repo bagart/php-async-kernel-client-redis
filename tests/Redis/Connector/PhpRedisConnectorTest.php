@@ -21,5 +21,5 @@ describe('PhpRedisConnector', function () {
         expect($redis)->toBeInstanceOf(\Redis::class);
 
         $redis->close();
-    })->skipIf(!extension_loaded('redis'), 'ext-redis is not loaded');
+    })->skip(!extension_loaded('redis'), 'ext-redis is not loaded');
 });

@@ -45,12 +45,16 @@ final class RedisCache implements ASKCacheContract
             return $default;
         }
 
-        return unserialize($value, ['allowed_classes' => []]);
+        $decoded = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+
+        return $decoded === null && json_last_error() !== JSON_ERROR_NONE
+            ? $default
+            : $decoded;
     }
 
     public function set(string $key, mixed $value, DateInterval|int|null $ttl = null): bool
     {
-        $serialized = serialize($value);
+        $serialized = json_encode($value, JSON_THROW_ON_ERROR);
         $seconds = $this->resolveTtlSeconds($ttl);
 
         return $seconds > 0
@@ -68,7 +72,7 @@ final class RedisCache implements ASKCacheContract
             $val = $values[$index];
             $result[$key] = ($val === false)
                 ? $default
-                : unserialize($val, ['allowed_classes' => []]);
+                : json_decode($val, true, 512, JSON_THROW_ON_ERROR);
         }
         return $result;
     }
@@ -77,7 +81,7 @@ final class RedisCache implements ASKCacheContract
     {
         $data = [];
         foreach ($values as $key => $value) {
-            $data[$key] = serialize($value);
+            $data[$key] = json_encode($value, JSON_THROW_ON_ERROR);
         }
 
         $success = $this->redis->mset($data);
