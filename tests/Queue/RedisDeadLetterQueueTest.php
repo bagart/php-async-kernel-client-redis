@@ -353,8 +353,10 @@ describe('RedisDeadLetterQueue', function () {
     });
 
     it('implements DeadLetterQueueContract', function () {
-        expect(RedisDeadLetterQueue::class)
-            ->toImplement(DeadLetterQueueContract::class);
+        // class_implements instead of arch toImplement: vendor-mode CI
+        // cannot evaluate toImplement on platform classes.
+        expect(class_implements(RedisDeadLetterQueue::class))
+            ->toContain(DeadLetterQueueContract::class);
     });
 
     it('pushes a job to DLQ and stores job data in hash', function () {

@@ -8,8 +8,10 @@ use BAGArt\ASKClientRedis\Redis\RedisDsn;
 
 describe('PhpRedisConnector', function () {
     it('implements RedisConnectorInterface', function () {
-        expect(PhpRedisConnector::class)
-            ->toImplement(RedisConnectorContract::class);
+        // class_implements instead of arch toImplement: vendor-mode CI
+        // cannot evaluate toImplement on platform classes.
+        expect(class_implements(PhpRedisConnector::class))
+            ->toContain(RedisConnectorContract::class);
     });
 
     it('connects to Redis and returns a Redis instance', function () {

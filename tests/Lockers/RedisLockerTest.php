@@ -180,9 +180,9 @@ describe('RedisLocker::releaseWithOwner', function () {
 
 describe('PhpRedisLockerTransport', function () {
     it('implements RedisLockerTransport', function () {
-        // Verify wrapper satisfies the interface (no live Redis —
-        // uses Reflection on method existence).
-        expect(PhpRedisLockerTransport::class)
-            ->toImplement(RedisLockerTransport::class);
+        // Contract check without live Redis — class_implements instead of
+        // arch toImplement (vendor-mode CI cannot evaluate toImplement).
+        expect(class_implements(PhpRedisLockerTransport::class))
+            ->toContain(RedisLockerTransport::class);
     });
 });
